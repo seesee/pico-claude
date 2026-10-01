@@ -96,7 +96,7 @@ python3 -m unittest discover -s tests     # host + hardware-free device code
 tools/screenshot.py --all                 # render sample scenes on the Pico -> screenshots/
 tools/screenshot.py --live                # run the real app for 20s and capture it
 python3 host/publisher.py --dry-run       # print the payload
-mpremote                                  # attach to the serial log
+tools/logs.py                             # follow the serial log (needs pyserial)
 ```
 
 `tools/screenshot.py` runs the code from `./device` on the board without

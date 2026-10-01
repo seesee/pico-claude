@@ -157,9 +157,12 @@ class App:
             wlan.disconnect()
             wlan.connect(w["ssid"], w["password"])
             for _ in range(40):          # up to 20s per attempt
-                if wlan.isconnected():
-                    break
                 await asyncio.sleep_ms(500)
+                if wlan.isconnected() or wlan.status() < 0:   # joined, or join failed
+                    break
+            if not wlan.isconnected():
+                log("wifi join failed, status", wlan.status())
+                await asyncio.sleep(1)
 
     async def ntp_task(self):
         import ntptime
