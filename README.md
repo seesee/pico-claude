@@ -101,8 +101,9 @@ cp device/config.example.json device/config.json   # set wifi + broker
 tools/deploy.sh
 ```
 
-Menu bar app, on one Mac (needs Xcode; run it from a normal Terminal window so
-codesign can reach your keychain):
+Menu bar app, on one Mac (needs Xcode). codesign needs the login keychain: in a
+Terminal window on the Mac it just works; over SSH run
+`security unlock-keychain ~/Library/Keychains/login.keychain-db` first.
 
 ```sh
 app/install.sh        # build, sign, copy to /Applications, start

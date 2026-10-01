@@ -41,8 +41,14 @@ PLIST
 HASH="$(security find-identity -v -p codesigning | grep -F "\"$IDENTITY\"" | head -1 | awk '{print $2}')"
 [ -n "$HASH" ] || { echo "no valid signing identity named: $IDENTITY" >&2; exit 1; }
 codesign --force --sign "$HASH" --identifier "$BUNDLE_ID" --options runtime "$APP" || {
-  echo "signing failed. Run this from a normal Terminal window (the login keychain must be" >&2
-  echo "unlocked, and macOS may ask to let codesign use the key - choose Always Allow)." >&2
+  echo "signing failed: codesign could not use the key in your login keychain." >&2
+  if [ -n "$SSH_CONNECTION" ]; then
+    echo "Over SSH the keychain is locked. Unlock it, then run this again:" >&2
+    echo "  security unlock-keychain ~/Library/Keychains/login.keychain-db" >&2
+  else
+    echo "Unlock the login keychain, and if macOS asks to let codesign use the key," >&2
+    echo "choose Always Allow." >&2
+  fi
   exit 1
 }
 codesign --verify --strict "$APP"
