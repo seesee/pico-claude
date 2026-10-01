@@ -30,6 +30,7 @@ mkdir -p "$DEST"
 cp "$SRC/publisher.py" "$SRC/usage.py" "$SRC/mqtt_pub.py" "$DEST/"
 sed "s|^PYTHON=python3\$|PYTHON=\"$PYTHON\"|" "$SRC/statusline-tee.sh" > "$DEST/statusline-tee.sh"
 chmod +x "$DEST/statusline-tee.sh"
+rm -f "$DEST/statusline.json"   # single capture file used by older versions
 
 if [ -n "$BROKER" ]; then
   printf '{\n  "broker": "%s",\n  "port": %s\n}\n' "$BROKER" "$PORT" > "$DEST/config.json"

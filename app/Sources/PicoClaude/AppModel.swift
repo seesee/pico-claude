@@ -109,12 +109,13 @@ final class AppModel: ObservableObject {
 
     private func scan() {
         let scanner = scanner
-        let statusline = stateDir.appendingPathComponent("statusline.json")
+        let statusline = stateDir.appendingPathComponent("statusline")   // written by statusline-tee.sh
         let name = localName
         scanQueue.async {
             let hours = scanner.scan()
-            let limits = readLimits(statusline: statusline)
-            let report = HostReport(host: name, ts: Int(Date().timeIntervalSince1970),
+            let nowS = Int(Date().timeIntervalSince1970)
+            let limits = readLimits(statuslineDir: statusline, now: nowS)
+            let report = HostReport(host: name, ts: nowS,
                                     h5: limits.h5, d7: limits.d7, hours: hours)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {

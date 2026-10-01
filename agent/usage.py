@@ -4,9 +4,10 @@ Pure stdlib. Two sources:
 
 * ``~/.claude/projects/**/*.jsonl`` - every assistant message carries a
   ``usage`` block, which gives token counts per hour and model.
-* ``statusline.json`` - the JSON Claude Code hands to the statusline command,
-  saved by ``statusline-tee.sh``. It is the only documented place the plan
-  limits (5-hour and 7-day ``used_percentage`` / ``resets_at``) are exposed.
+* ``statusline/<session>.json`` - the JSON Claude Code hands to the statusline
+  command, saved per session by ``statusline-tee.sh``. It is the only
+  documented place the plan limits (5-hour and 7-day ``used_percentage`` /
+  ``resets_at``) are exposed.
 """
 import glob
 import json
@@ -15,6 +16,7 @@ import time
 
 DAY = 86400
 KEEP_DAYS = 8  # a little more than the 7 days we chart
+SAME_WINDOW = 120  # reset times this close together are the same limit window
 
 
 def parse_ts(s):
@@ -120,36 +122,60 @@ def hour_buckets(entries, now):
     return [[h, m] + v for (h, m), v in sorted(buckets.items())]
 
 
-def read_limits(statusline_path, now):
-    """Extract plan limits from the captured statusline JSON.
+def best_window(windows, now):
+    """The reading to believe out of several of the same limit window.
 
-    Returns {"h5": {...}|None, "d7": {...}|None}; "ts" is when the reading was
-    captured, so the aggregator can pick the newest across hosts. A window
-    whose reset time has passed is reported as 0%.
+    Every session shows the percentage from its own last response, and an idle
+    session keeps re-saving that stale figure, so capture time says nothing
+    about which reading is current. Usage only grows until the window resets:
+    the latest window wins, and within it the highest percentage. Capture time
+    only breaks ties. If every window has expired the result reads 0%.
     """
-    result = {"h5": None, "d7": None}
-    try:
-        captured = os.stat(statusline_path).st_mtime
-        with open(statusline_path) as f:
-            limits = json.load(f).get("rate_limits") or {}
-    except (OSError, ValueError, AttributeError):
-        return result
-    for key, name in (("h5", "five_hour"), ("d7", "seven_day")):
-        w = limits.get(name)
-        if not isinstance(w, dict) or w.get("used_percentage") is None:
+    windows = [w for w in windows if w]
+    live = [w for w in windows if w["reset"] > now]
+    if live:
+        latest = max(w["reset"] for w in live)
+        return max((w for w in live if w["reset"] >= latest - SAME_WINDOW),
+                   key=lambda w: (w["pct"], w["ts"]))
+    unknown = [w for w in windows if not w["reset"]]
+    if unknown:
+        return max(unknown, key=lambda w: w["ts"])
+    if windows:
+        return {"pct": 0.0, "reset": 0, "ts": max(w["ts"] for w in windows)}
+    return None
+
+
+def read_limits(statusline_dir, now):
+    """Extract plan limits from the statusline JSON captured for each session.
+
+    Returns {"h5": {...}|None, "d7": {...}|None}, each the best reading across
+    sessions (see best_window); "ts" is when that reading was last captured.
+    Captures older than KEEP_DAYS are deleted.
+    """
+    found = {"h5": [], "d7": []}
+    for path in glob.glob(os.path.join(statusline_dir, "*.json")):
+        try:
+            captured = os.stat(path).st_mtime
+            if captured < now - KEEP_DAYS * DAY:
+                os.unlink(path)
+                continue
+            with open(path) as f:
+                limits = json.load(f).get("rate_limits") or {}
+        except (OSError, ValueError, AttributeError):
             continue
-        pct = round(float(w["used_percentage"]), 1)
-        reset = int(w.get("resets_at") or 0)
-        if reset and reset <= now:
-            pct, reset = 0.0, 0
-        result[key] = {"pct": pct, "reset": reset, "ts": int(captured)}
-    return result
+        for key, name in (("h5", "five_hour"), ("d7", "seven_day")):
+            w = limits.get(name)
+            if not isinstance(w, dict) or w.get("used_percentage") is None:
+                continue
+            found[key].append({"pct": round(float(w["used_percentage"]), 1),
+                               "reset": int(w.get("resets_at") or 0), "ts": int(captured)})
+    return {key: best_window(windows, now) for key, windows in found.items()}
 
 
-def build_report(entries, statusline_path, host, now=None):
+def build_report(entries, statusline_dir, host, now=None):
     """This host's report, published to <prefix>/<host> for the aggregator."""
     now = now or time.time()
     report = {"v": 2, "host": host, "ts": int(now)}
-    report.update(read_limits(statusline_path, now))
+    report.update(read_limits(statusline_dir, now))
     report["hours"] = hour_buckets(entries, now)
     return report

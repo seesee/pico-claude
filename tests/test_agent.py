@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -88,30 +89,76 @@ class HourBuckets(unittest.TestCase):
 
 
 class Limits(unittest.TestCase):
-    def write(self, obj):
-        f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-        json.dump(obj, f)
-        f.close()
-        self.addCleanup(os.unlink, f.name)
-        return f.name
+    def capture(self, **sessions):
+        """A capture directory with one statusline JSON per session."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        for name, obj in sessions.items():
+            with open(os.path.join(d, name + ".json"), "w") as f:
+                json.dump(obj, f)
+        return d
 
     def test_reads_windows(self):
-        p = self.write({"rate_limits": {
+        d = self.capture(a={"rate_limits": {
             "five_hour": {"used_percentage": 23.46, "resets_at": 2000},
             "seven_day": {"used_percentage": 41, "resets_at": 9000}}})
-        r = usage.read_limits(p, 1000)
+        r = usage.read_limits(d, 1000)
         self.assertEqual((r["h5"]["pct"], r["h5"]["reset"]), (23.5, 2000))
         self.assertEqual((r["d7"]["pct"], r["d7"]["reset"]), (41.0, 9000))
 
     def test_expired_window_reads_zero(self):
-        p = self.write({"rate_limits": {"five_hour": {"used_percentage": 90, "resets_at": 500}}})
-        r = usage.read_limits(p, 1000)
+        d = self.capture(a={"rate_limits": {"five_hour": {"used_percentage": 90, "resets_at": 500}}})
+        r = usage.read_limits(d, 1000)
         self.assertEqual((r["h5"]["pct"], r["h5"]["reset"]), (0.0, 0))
         self.assertIsNone(r["d7"])
 
     def test_missing_or_bad_file(self):
         self.assertEqual(usage.read_limits("/nonexistent", 1), {"h5": None, "d7": None})
-        self.assertEqual(usage.read_limits(self.write([1, 2]), 1), {"h5": None, "d7": None})
+        self.assertEqual(usage.read_limits(self.capture(a=[1, 2]), 1), {"h5": None, "d7": None})
+
+    def test_idle_session_does_not_hide_a_higher_reading(self):
+        # an idle session keeps re-saving the percentage it last heard, so its
+        # file is the most recently written one
+        d = self.capture(
+            busy={"rate_limits": {"five_hour": {"used_percentage": 22, "resets_at": 2000}}},
+            idle={"rate_limits": {"five_hour": {"used_percentage": 10, "resets_at": 2000}}})
+        os.utime(os.path.join(d, "busy.json"), (900, 900))
+        os.utime(os.path.join(d, "idle.json"), (990, 990))
+        self.assertEqual(usage.read_limits(d, 1000)["h5"], {"pct": 22.0, "reset": 2000, "ts": 900})
+
+    def test_old_captures_are_pruned(self):
+        d = self.capture(a={"rate_limits": {"five_hour": {"used_percentage": 5, "resets_at": 500}}})
+        now = 100 * usage.DAY
+        os.utime(os.path.join(d, "a.json"), (now - 9 * usage.DAY,) * 2)
+        self.assertIsNone(usage.read_limits(d, now)["h5"])
+        self.assertEqual(os.listdir(d), [])
+
+
+class BestWindow(unittest.TestCase):
+    def test_same_window_highest_percentage_wins(self):
+        low = {"pct": 16.0, "reset": 5000, "ts": 200}
+        high = {"pct": 22.0, "reset": 5000, "ts": 100}
+        self.assertEqual(usage.best_window([low, None, high], 300), high)
+        self.assertIsNone(usage.best_window([None], 300))
+
+    def test_later_window_beats_higher_percentage(self):
+        last = {"pct": 90.0, "reset": 5000, "ts": 100}
+        fresh = {"pct": 2.0, "reset": 23000, "ts": 90}
+        self.assertEqual(usage.best_window([last, fresh], 300), fresh)
+
+    def test_reset_times_a_few_seconds_apart_are_one_window(self):
+        a = {"pct": 30.0, "reset": 5000, "ts": 100}
+        b = {"pct": 12.0, "reset": 5002, "ts": 100}
+        self.assertEqual(usage.best_window([a, b], 300), a)
+
+    def test_expired_only_reads_zero(self):
+        w = {"pct": 80.0, "reset": 250, "ts": 100}
+        self.assertEqual(usage.best_window([w], 300), {"pct": 0.0, "reset": 0, "ts": 100})
+
+    def test_live_window_beats_expired_newer_capture(self):
+        expired = {"pct": 80.0, "reset": 250, "ts": 290}
+        live = {"pct": 7.0, "reset": 9000, "ts": 280}
+        self.assertEqual(usage.best_window([expired, live], 300), live)
 
 
 class MqttPackets(unittest.TestCase):

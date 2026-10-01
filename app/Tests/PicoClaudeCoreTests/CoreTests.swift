@@ -36,16 +36,35 @@ final class ModelTests: XCTestCase {
 }
 
 final class AggregatorTests: XCTestCase {
-    func testNewestReadingWins() {
-        let old = LimitWindow(pct: 10, reset: 5000, ts: 100)
-        let new = LimitWindow(pct: 30, reset: 5000, ts: 200)
-        XCTAssertEqual(Aggregator.newest([old, nil, new], now: 300), new)
-        XCTAssertNil(Aggregator.newest([nil, nil], now: 300))
+    func testSameWindowHighestPercentageWins() {
+        // an idle session re-saves its stale percentage, so capture time says nothing
+        let stale = LimitWindow(pct: 16, reset: 5000, ts: 200)
+        let high = LimitWindow(pct: 22, reset: 5000, ts: 100)
+        XCTAssertEqual(Aggregator.best([stale, nil, high], now: 300), high)
+        XCTAssertNil(Aggregator.best([nil, nil], now: 300))
+    }
+
+    func testLaterWindowBeatsHigherPercentage() {
+        let last = LimitWindow(pct: 90, reset: 5000, ts: 100)
+        let fresh = LimitWindow(pct: 2, reset: 23000, ts: 90)
+        XCTAssertEqual(Aggregator.best([last, fresh], now: 300), fresh)
+    }
+
+    func testResetTimesAFewSecondsApartAreOneWindow() {
+        let a = LimitWindow(pct: 30, reset: 5000, ts: 100)
+        let b = LimitWindow(pct: 12, reset: 5002, ts: 100)
+        XCTAssertEqual(Aggregator.best([a, b], now: 300), a)
+    }
+
+    func testLiveWindowBeatsExpiredNewerCapture() {
+        let expired = LimitWindow(pct: 80, reset: 250, ts: 290)
+        let live = LimitWindow(pct: 7, reset: 9000, ts: 280)
+        XCTAssertEqual(Aggregator.best([expired, live], now: 300), live)
     }
 
     func testExpiredWindowReadsZero() {
         let w = LimitWindow(pct: 80, reset: 250, ts: 100)
-        XCTAssertEqual(Aggregator.newest([w], now: 300), LimitWindow(pct: 0, reset: 0, ts: 100))
+        XCTAssertEqual(Aggregator.best([w], now: 300), LimitWindow(pct: 0, reset: 0, ts: 100))
     }
 
     func testMergeSumsHostsAndCutsDaysInLocalTime() {
@@ -123,14 +142,31 @@ final class ScannerTests: XCTestCase {
     }
 
     func testReadLimits() throws {
-        let file = dir.appendingPathComponent("statusline.json")
+        let captures = dir.appendingPathComponent("statusline")
+        try FileManager.default.createDirectory(at: captures, withIntermediateDirectories: true)
+        // the idle session wrote last, with the lower percentage it last heard
         try #"{"rate_limits":{"five_hour":{"used_percentage":23.46,"resets_at":2000}}}"#
-            .write(to: file, atomically: true, encoding: .utf8)
-        let limits = readLimits(statusline: file)
+            .write(to: captures.appendingPathComponent("busy.json"), atomically: true, encoding: .utf8)
+        try #"{"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":2000}}}"#
+            .write(to: captures.appendingPathComponent("idle.json"), atomically: true, encoding: .utf8)
+        let limits = readLimits(statuslineDir: captures, now: 1000)
         XCTAssertEqual(limits.h5?.pct, 23.5)
         XCTAssertEqual(limits.h5?.reset, 2000)
         XCTAssertNil(limits.d7)
-        XCTAssertNil(readLimits(statusline: dir.appendingPathComponent("missing.json")).h5)
+        XCTAssertNil(readLimits(statuslineDir: dir.appendingPathComponent("missing"), now: 1000).h5)
+    }
+
+    func testOldCapturesArePruned() throws {
+        let captures = dir.appendingPathComponent("statusline")
+        try FileManager.default.createDirectory(at: captures, withIntermediateDirectories: true)
+        let file = captures.appendingPathComponent("a.json")
+        try #"{"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":500}}}"#
+            .write(to: file, atomically: true, encoding: .utf8)
+        let nowS = 100 * 86400
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: TimeInterval(nowS - 9 * 86400))], ofItemAtPath: file.path)
+        XCTAssertNil(readLimits(statuslineDir: captures, now: nowS).h5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 }
 

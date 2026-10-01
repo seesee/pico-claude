@@ -74,7 +74,7 @@ def main():
 
     cfg = load_config(args.config)
     state_dir = os.path.dirname(os.path.abspath(args.config))
-    statusline = os.path.join(state_dir, "statusline.json")
+    statusline = os.path.join(state_dir, "statusline")   # written by statusline-tee.sh
     activity = os.path.join(state_dir, "activity")   # touched by statusline-tee.sh
     alive = os.path.join(state_dir, "alive")         # read by statusline-tee.sh
     scanner = TranscriptScanner(os.path.expanduser(cfg["projects_dir"]))

@@ -98,20 +98,34 @@ public final class TranscriptScanner: @unchecked Sendable {
     }
 }
 
-/// Plan limits from the statusline JSON saved by statusline-tee.sh.
-/// The capture time is the file's modification time.
-public func readLimits(statusline: URL) -> (h5: LimitWindow?, d7: LimitWindow?) {
-    guard let data = try? Data(contentsOf: statusline),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let limits = obj["rate_limits"] as? [String: Any],
-          let modified = (try? statusline.resourceValues(forKeys: [.contentModificationDateKey]))?
-              .contentModificationDate else { return (nil, nil) }
-    func window(_ name: String) -> LimitWindow? {
-        guard let w = limits[name] as? [String: Any],
-              let pct = (w["used_percentage"] as? NSNumber)?.doubleValue else { return nil }
-        return LimitWindow(pct: (pct * 10).rounded() / 10,
-                           reset: (w["resets_at"] as? NSNumber)?.intValue ?? 0,
-                           ts: Int(modified.timeIntervalSince1970))
+/// Plan limits from the statusline JSON that statusline-tee.sh saves for each
+/// session: the best reading across sessions (see `Aggregator.best`). The
+/// capture time is the file's modification time; captures older than eight
+/// days are deleted.
+public func readLimits(statuslineDir: URL, now: Int) -> (h5: LimitWindow?, d7: LimitWindow?) {
+    let files = (try? FileManager.default.contentsOfDirectory(
+        at: statuslineDir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    var h5: [LimitWindow] = [], d7: [LimitWindow] = []
+    for file in files where file.pathExtension == "json" {
+        guard let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate else { continue }
+        let captured = Int(modified.timeIntervalSince1970)
+        if captured < now - 8 * 86400 {
+            try? FileManager.default.removeItem(at: file)
+            continue
+        }
+        guard let data = try? Data(contentsOf: file),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let limits = obj["rate_limits"] as? [String: Any] else { continue }
+        func window(_ name: String) -> LimitWindow? {
+            guard let w = limits[name] as? [String: Any],
+                  let pct = (w["used_percentage"] as? NSNumber)?.doubleValue else { return nil }
+            return LimitWindow(pct: (pct * 10).rounded() / 10,
+                               reset: (w["resets_at"] as? NSNumber)?.intValue ?? 0,
+                               ts: captured)
+        }
+        if let w = window("five_hour") { h5.append(w) }
+        if let w = window("seven_day") { d7.append(w) }
     }
-    return (window("five_hour"), window("seven_day"))
+    return (Aggregator.best(h5, now: now), Aggregator.best(d7, now: now))
 }

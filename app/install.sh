@@ -27,6 +27,7 @@ cp -R "$HERE/build/PicoClaude.app" /Applications/
 mkdir -p "$STATE"
 cp "$AGENT/statusline-tee.sh" "$STATE/statusline-tee.sh"
 chmod +x "$STATE/statusline-tee.sh"
+rm -f "$STATE/statusline.json"   # single capture file used by older versions
 python3 "$AGENT/statusline_setting.py" install "$STATE/statusline-tee.sh"
 # without publisher.py the shim only captures; it no longer starts python
 rm -f "$STATE/publisher.py" "$STATE/usage.py" "$STATE/mqtt_pub.py" "$STATE/alive" "$STATE/lock"

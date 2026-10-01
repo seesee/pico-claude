@@ -44,7 +44,9 @@ Home Assistant etc. ── unicorn/control/onoff ──►  Pico ◄──┘
 
 Merging rules: token counts are summed across hosts (hosts report hourly
 buckets, and days are cut in the Mac's timezone). The limits are account-wide,
-so the newest reading from any host wins.
+but every session only knows them as of its own last response, so the best
+reading across all sessions and hosts wins: the latest window, and within it
+the highest percentage.
 
 Limits are only refreshed when a Claude Code terminal session somewhere gets a
 response. When the Mac is asleep nothing is merged; the Pico keeps the last
