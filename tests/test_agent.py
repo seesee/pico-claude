@@ -6,7 +6,7 @@ import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "host"))
+sys.path.insert(0, os.path.join(ROOT, "agent"))
 
 import mqtt_pub  # noqa: E402
 import statusline_setting  # noqa: E402
@@ -21,13 +21,6 @@ def line(ts, mid, out=10, model="claude-fable-5-1", req="r1", inp=1, cc=2, cr=3)
             "input_tokens": inp, "output_tokens": out,
             "cache_creation_input_tokens": cc, "cache_read_input_tokens": cr}},
     }) + "\n"
-
-
-class PrettyModel(unittest.TestCase):
-    def test_names(self):
-        self.assertEqual(usage.pretty_model("claude-fable-5-1"), "Fable 5.1")
-        self.assertEqual(usage.pretty_model("claude-haiku-4-5-20251001"), "Haiku 4.5")
-        self.assertEqual(usage.pretty_model(""), "")
 
 
 class ParseLine(unittest.TestCase):
@@ -76,24 +69,22 @@ class Scanner(unittest.TestCase):
         self.assertEqual(list(s.scan(self.now)), ["n1:r1"])
 
 
-class Aggregate(unittest.TestCase):
-    def test_today_week_and_model(self):
-        now = time.mktime((2026, 10, 1, 16, 0, 0, 0, 0, -1))
+class HourBuckets(unittest.TestCase):
+    def test_groups_by_hour_and_model(self):
         entries = {
-            "a": (now - 3600, "claude-fable-5-1", 1, 100, 2, 3),          # today
-            "b": (now - 7200, "claude-haiku-4-5-20251001", 1, 5, 0, 0),   # today
-            "c": (now - 2 * usage.DAY, "claude-fable-5-1", 10, 10, 10, 10),
-            "d": (now - 30 * usage.DAY, "claude-fable-5-1", 9, 9, 9, 9),  # outside
+            "a": (7200 + 10, "fable", 1, 100, 2, 3),
+            "b": (7200 + 3599, "fable", 1, 5, 0, 0),
+            "c": (7200 + 20, "haiku", 0, 1, 0, 0),
+            "d": (3 * 3600, "fable", 10, 10, 10, 10),
+            "future": (10 ** 9, "fable", 9, 9, 9, 9),
         }
-        agg = usage.aggregate(entries, now)
-        self.assertEqual(agg["today"], {"tok": 112, "out": 105, "msgs": 2})
-        self.assertEqual(agg["week"], [0, 0, 0, 0, 40, 0, 112])
-        self.assertEqual(agg["model"], "Fable 5.1")
+        self.assertEqual(usage.hour_buckets(entries, 4 * 3600), [
+            [2, "fable", 112, 105, 2], [2, "haiku", 1, 1, 1], [3, "fable", 40, 10, 1]])
 
-    def test_empty(self):
-        agg = usage.aggregate({}, time.time())
-        self.assertEqual(agg["week"], [0] * 7)
-        self.assertEqual(agg["model"], "")
+    def test_report_shape(self):
+        r = usage.build_report({"a": (3600, "m", 1, 1, 1, 1)}, "/nonexistent", "box", 7200)
+        self.assertEqual(r, {"v": 2, "host": "box", "ts": 7200, "h5": None, "d7": None,
+                             "hours": [[1, "m", 4, 1, 1]]})
 
 
 class Limits(unittest.TestCase):

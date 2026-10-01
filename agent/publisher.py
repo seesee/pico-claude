@@ -1,38 +1,44 @@
 #!/usr/bin/env python3
-"""Publish Claude Code usage to MQTT for the Pico display.
+"""Publish this host's Claude Code usage to MQTT.
 
-Rescans transcripts every `interval` seconds and publishes a retained JSON
-message whenever something changed (and at least every `heartbeat` seconds).
+Each host reports to its own retained topic, <topic_prefix>/<host>. The
+PicoClaude menu bar app merges the reports and feeds the display.
+
+Rescans transcripts every `interval` seconds and publishes whenever something
+changed (and at least every `heartbeat` seconds).
 
 Normally started on demand by statusline-tee.sh with --idle-exit, so it runs
 only while Claude Code is in use and exits once the statusline goes quiet.
 Only one instance runs at a time (lock file).
 
 Config (JSON, optional): ~/.claude/pico-claude/config.json
-    {"broker": "192.168.1.10", "port": 1883, "topic": "claude/usage",
-     "user": null, "password": null}
+    {"broker": "192.168.1.10", "port": 1883, "host": "mybox",
+     "topic_prefix": "claude/hosts", "user": null, "password": null}
 """
 import argparse
 import fcntl
 import json
 import os
+import re
+import socket
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mqtt_pub import publish  # noqa: E402
-from usage import TranscriptScanner, build_payload  # noqa: E402
+from usage import TranscriptScanner, build_report  # noqa: E402
 
 STATE_DIR = os.path.expanduser("~/.claude/pico-claude")
 DEFAULTS = {
     "broker": "127.0.0.1",
     "port": 1883,
-    "topic": "claude/usage",
+    "topic_prefix": "claude/hosts",
+    "host": None,            # default: short hostname
     "user": None,
     "password": None,
     "projects_dir": "~/.claude/projects",
     "interval": 10,
-    "heartbeat": 60,
+    "heartbeat": 300,
 }
 
 
@@ -72,6 +78,8 @@ def main():
     activity = os.path.join(state_dir, "activity")   # touched by statusline-tee.sh
     alive = os.path.join(state_dir, "alive")         # read by statusline-tee.sh
     scanner = TranscriptScanner(os.path.expanduser(cfg["projects_dir"]))
+    host = re.sub(r"[^A-Za-z0-9_.-]", "_", cfg["host"] or socket.gethostname().split(".")[0])
+    topic = "%s/%s" % (cfg["topic_prefix"].rstrip("/"), host)
 
     looping = not (args.once or args.dry_run)
     if looping:
@@ -93,15 +101,16 @@ def main():
 
     while True:
         now = time.time()
-        payload = build_payload(scanner.scan(now), statusline, now)
+        payload = build_report(scanner.scan(now), statusline, host, now)
         body = {k: v for k, v in payload.items() if k != "ts"}
         if args.dry_run:
             print(json.dumps(payload, indent=2))
             return
         if body != last_body or now - last_sent >= cfg["heartbeat"]:
             try:
-                publish(cfg["broker"], cfg["port"], cfg["topic"],
+                publish(cfg["broker"], cfg["port"], topic,
                         json.dumps(payload, separators=(",", ":")),
+                        client_id="pico-claude-" + host,
                         user=cfg["user"], password=cfg["password"])
                 last_body, last_sent = body, now
                 if was_failing:

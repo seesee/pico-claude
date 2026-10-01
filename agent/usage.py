@@ -3,7 +3,7 @@
 Pure stdlib. Two sources:
 
 * ``~/.claude/projects/**/*.jsonl`` - every assistant message carries a
-  ``usage`` block, which gives token counts per day.
+  ``usage`` block, which gives token counts per hour and model.
 * ``statusline.json`` - the JSON Claude Code hands to the statusline command,
   saved by ``statusline-tee.sh``. It is the only documented place the plan
   limits (5-hour and 7-day ``used_percentage`` / ``resets_at``) are exposed.
@@ -11,25 +11,10 @@ Pure stdlib. Two sources:
 import glob
 import json
 import os
-import re
 import time
 
 DAY = 86400
 KEEP_DAYS = 8  # a little more than the 7 days we chart
-
-
-def pretty_model(model_id):
-    """claude-fable-5-1 -> 'Fable 5.1', claude-haiku-4-5-20251001 -> 'Haiku 4.5'."""
-    if not model_id:
-        return ""
-    parts = [p for p in model_id.split("-") if p and p != "claude"]
-    parts = [p for p in parts if not re.fullmatch(r"\d{8}", p)]
-    words = [p for p in parts if not p.isdigit()]
-    nums = [p for p in parts if p.isdigit()]
-    name = " ".join(w.capitalize() for w in words)
-    if nums:
-        name = (name + " " + ".".join(nums)).strip()
-    return name
 
 
 def parse_ts(s):
@@ -118,53 +103,29 @@ class TranscriptScanner:
         return self.entries
 
 
-def local_midnight(now):
-    lt = time.localtime(now)
-    return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1))
+def hour_buckets(entries, now):
+    """Token usage per (UTC hour, model): rows of [hour, model, tok, out, msgs].
 
-
-def utc_offset(now):
-    return int(time.localtime(now).tm_gmtoff)
-
-
-def aggregate(entries, now):
-    """Summarise entries into today's totals, a 7-day series and top model."""
-    midnight = local_midnight(now)
-    # day boundaries, oldest first; index 6 is today. mktime handles DST.
-    lt = time.localtime(now)
-    starts = [
-        time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday - back, 0, 0, 0, 0, 0, -1))
-        for back in range(6, -1, -1)
-    ]
-    week = [0] * 7
-    tok = out = msgs = 0
-    by_model = {}
+    `hour` is unix time // 3600. Hourly buckets let the aggregator cut days in
+    its own timezone, whatever this host's clock is set to.
+    """
+    buckets = {}
     for ts, model, i, o, cc, cr in entries.values():
-        if ts < starts[0] or ts > now + 60:
+        if ts > now + 60:
             continue
-        total = i + o + cc + cr
-        idx = 6
-        while idx > 0 and ts < starts[idx]:
-            idx -= 1
-        week[idx] += total
-        if ts >= midnight:
-            tok += total
-            out += o
-            msgs += 1
-            by_model[model] = by_model.get(model, 0) + o
-    top = max(by_model, key=by_model.get) if by_model else ""
-    return {
-        "today": {"tok": tok, "out": out, "msgs": msgs},
-        "week": week,
-        "model": pretty_model(top),
-    }
+        b = buckets.setdefault((int(ts // 3600), model), [0, 0, 0])
+        b[0] += i + o + cc + cr
+        b[1] += o
+        b[2] += 1
+    return [[h, m] + v for (h, m), v in sorted(buckets.items())]
 
 
 def read_limits(statusline_path, now):
     """Extract plan limits from the captured statusline JSON.
 
-    Returns {"h5": {...}|None, "d7": {...}|None}. A window whose reset time has
-    passed is reported as 0% (the limit has reset; we have no newer reading).
+    Returns {"h5": {...}|None, "d7": {...}|None}; "ts" is when the reading was
+    captured, so the aggregator can pick the newest across hosts. A window
+    whose reset time has passed is reported as 0%.
     """
     result = {"h5": None, "d7": None}
     try:
@@ -185,9 +146,10 @@ def read_limits(statusline_path, now):
     return result
 
 
-def build_payload(entries, statusline_path, now=None):
+def build_report(entries, statusline_path, host, now=None):
+    """This host's report, published to <prefix>/<host> for the aggregator."""
     now = now or time.time()
-    payload = {"v": 1, "ts": int(now), "tz": utc_offset(now)}
-    payload.update(read_limits(statusline_path, now))
-    payload.update(aggregate(entries, now))
-    return payload
+    report = {"v": 2, "host": host, "ts": int(now)}
+    report.update(read_limits(statusline_path, now))
+    report["hours"] = hour_buckets(entries, now)
+    return report
