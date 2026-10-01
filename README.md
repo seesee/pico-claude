@@ -1,5 +1,7 @@
 # pico-claude
 
+[![tests](https://github.com/seesee/pico-claude/actions/workflows/tests.yml/badge.svg)](https://github.com/seesee/pico-claude/actions/workflows/tests.yml)
+
 A Raspberry Pi Pico 2 W with a Pimoroni Pico Display (320x240 LCD) that shows
 Claude Code usage: the 5-hour session limit, the weekly limit, and today's
 token count with a seven-day chart.
@@ -159,3 +161,8 @@ agent/statusline-tee.sh  statusline shim
 app/Sources/PicoClaudeCore   scanner, merge, MQTT framing (tested)
 app/Sources/PicoClaude       menu bar app
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE). This is an unofficial project and is not
+affiliated with or endorsed by Anthropic.
