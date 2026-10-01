@@ -1,0 +1,18 @@
+{
+    "wifi": {
+        "ssid": "YOUR_WIFI_SSID",
+        "password": "YOUR_WIFI_PASSWORD"
+    },
+    "mqtt": {
+        "broker_ip": "192.168.1.10",
+        "broker_port": 1883,
+        "client_id": "pico_claude",
+        "topic_on_off": "unicorn/control/onoff",
+        "topic_cmd": "unicorn/control/cmd",
+        "topic_usage": "claude/usage"
+    },
+    "general": {
+        "brightness": 0.75,
+        "stale_after_s": 900
+    }
+}

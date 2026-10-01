@@ -1,0 +1,7 @@
+# secrets / machine-local
+device/config.json
+backup/
+__pycache__/
+*.pyc
+.DS_Store
+screenshots/
