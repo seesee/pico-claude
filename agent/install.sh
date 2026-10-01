@@ -30,7 +30,10 @@ mkdir -p "$DEST"
 cp "$SRC/publisher.py" "$SRC/usage.py" "$SRC/mqtt_pub.py" "$DEST/"
 sed "s|^PYTHON=python3\$|PYTHON=\"$PYTHON\"|" "$SRC/statusline-tee.sh" > "$DEST/statusline-tee.sh"
 chmod +x "$DEST/statusline-tee.sh"
-rm -f "$DEST/statusline.json"   # single capture file used by older versions
+rm -f "$DEST/statusline.json" "$DEST"/statusline.json.*   # capture files used by older versions
+# a publisher that is already running still has the old code loaded and holds
+# the lock; stop it so the next statusline refresh (or systemd) starts this one
+pkill -f "$DEST/publisher.py" 2>/dev/null || true
 
 if [ -n "$BROKER" ]; then
   printf '{\n  "broker": "%s",\n  "port": %s\n}\n' "$BROKER" "$PORT" > "$DEST/config.json"
@@ -58,7 +61,8 @@ RestartSec=30
 WantedBy=default.target
 UNIT
   systemctl --user daemon-reload
-  systemctl --user enable --now pico-claude.service
+  systemctl --user enable pico-claude.service
+  systemctl --user restart pico-claude.service
   echo "systemd user service pico-claude enabled (journalctl --user -u pico-claude)"
   echo "to keep it running while logged out: sudo loginctl enable-linger $USER"
 fi
